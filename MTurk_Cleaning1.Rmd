@@ -1,0 +1,988 @@
+---
+title: "MTurkCleaning1"
+author: "Shiyu Dou"
+date: "3/29/2020"
+output: html_document
+---
+
+**
+In this section of code, we prepped the raw data for analysis. The procedure was done in both SAS (by Dr. DeKay) and R (by Shiyu Dou).
+There is a one subject difference after box-cox transformation noted in the corresponding section of comments, because box-cox routines perform slightly different in SAS and R. 
+Other exclusion criteria produced uniform sample in both SAS (n=505) and R (n=506). 
+**
+
+```{r, warning=F}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(rcompanion)
+library(MASS)
+library(gtools)
+library(sjPlot)
+library(sjlabelled)
+library(sjmisc)
+library(ggplot2)
+theme_set(theme_sjplot())
+# Packages for mixed-effect logistic regression analysis
+library(lme4)
+require(lsmeans)
+library(gridExtra)
+library(grid)
+library(lattice)
+library(ggforce)
+```
+
+
+```{r, warning=F}
+MTurk <- read_csv("MTurk_04_04.csv")
+```
+
+
+```{r, warning=F, include=F}
+summary(MTurk$`Duration (in seconds)`)
+dim(MTurk)
+```
+
+Corrections on raw data
+## g2.1.2.2 = g.2.1.2.2;
+## Variable xl7.0.4.4 (with lower-case L) is not named propoerly in the data file;
+## Qualtrics assigned it the name QID353: xl7.0.4.4 = QID353;
+
+Pre-knowledge
+## The block labels follow this pattern
++ g = gains, l = losses (lowercase L, but use L here because l looks like 1)
++ first number = cell (1-9 based on our design tables)
++ second number = option description order (1 = good first, 2 = bad first, 0 = not relevant)
++ third number = domain (1=disease, 2=invest, 3=wildfire, 4=drought)
++ fourth number = block number for similar blocks (repetitions that can be combined)
+
+## Qualtrics Choice Coding
++ Program A (Sure):1 
++ Program B (Risky):2
++ Strong Preference for Program A:1
++ Moderate Preference for Program A:2
++ Slight Preference for Program A:3	
++ No Preference At All:4
++ Slight Preference for Program:5
++ Moderate Preference for Program B:6	
++ Strong Preference for Program B:7
+
+## Choice Coding After Transformation
++ Sure = 0
++ Risky = 1
++ Rescored to -3 to 3, high favors Risky
++ Strong Preference for Program A (Sure): -3 
++ No Preference At All: 0
++ Strong Preference for Program B (Risky): 3
+
+
+Attribute Assignment 1: Domain Order (the order of the 4 domains in which they were presented to each subject)
+
+## Column 1645 to 1713 contain strings of the domain order attribute formatted as "L6.1.2|L6.1.3|L6.1.4|L6.1.1". 
+## We will extract these strings by finding their corresponding column number stored in column 1645 of each row.
+```{r, warning=F}
+# Preallocate 4 columns for the 4 domains in the order of which was presented to the subjects
+MTurk$DomainOrder <- NA
+MTurk$DomainOrder1 <- NA
+MTurk$DomainOrder2 <- NA
+MTurk$DomainOrder3 <- NA
+MTurk$DomainOrder4 <- NA
+MTurk$FirstDomain <- NA
+MTurk$SecondDomain <- NA
+MTurk$ThirdDomain <- NA
+MTurk$FourthDomain <- NA
+```
+
+```{r}
+# MTurk$FL_4_DO one or more R objects, to be converted to character vectors.
+# If a value is specified for collapse, in our case, "_DO". The values in the result are then concatenated into a single string, with the elements being separated by the value of collapse.
+# Ex: FL_50 - FL_50_DO, matches the column header
+MTurk$FL_4_DO <- paste0(MTurk$FL_4_DO, "_DO")
+```
+
+```{r}
+# Extract the number representing the domains from strings formatted as "L6.1.2|L6.1.3|L6.1.4|L6.1.1" 
+# Referring to our coding scheme, it's the last digit of each block. Here is 2.3.4.1
+for (i in 1:dim(MTurk)[1]){
+  if(MTurk$FL_4_DO[i] != 'NA_DO'){
+    MTurk$DomainOrder[i] <- MTurk[i,MTurk$FL_4_DO[i]]
+    MTurk$DomainOrder1[i] <- substr(MTurk$DomainOrder[i], start = 6, stop = 6)
+    MTurk$DomainOrder2[i] <- substr(MTurk$DomainOrder[i], start = 13, stop = 13)
+    MTurk$DomainOrder3[i] <- substr(MTurk$DomainOrder[i], start = 20, stop = 20)
+    MTurk$DomainOrder4[i] <- substr(MTurk$DomainOrder[i], start = 27, stop = 27)
+  }
+}
+```
+
+```{r}
+# Assign actual domain name (e.g., disease) instead of numbers (e.g., 1)
+for (i in 1:dim(MTurk)[1]){
+  MTurk$FirstDomain[i] <- ifelse(MTurk$DomainOrder1[i] == 1, "Disease", ifelse(MTurk$DomainOrder1[i] == 2, "Invest", ifelse(MTurk$DomainOrder1[i] == 3, "Wildfire", ifelse(MTurk$DomainOrder1[i] == 4, "Drought", NA))))
+  MTurk$SecondDomain[i] <- ifelse(MTurk$DomainOrder2[i] == 1, "Disease", ifelse(MTurk$DomainOrder2[i] == 2, "Invest", ifelse(MTurk$DomainOrder2[i] == 3, "Wildfire", ifelse(MTurk$DomainOrder2[i] == 4, "Drought", NA))))
+  MTurk$ThirdDomain[i] <- ifelse(MTurk$DomainOrder3[i] == 1, "Disease", ifelse(MTurk$DomainOrder3[i] == 2, "Invest", ifelse(MTurk$DomainOrder3[i] == 3, "Wildfire", ifelse(MTurk$DomainOrder3[i] == 4, "Drought", NA))))
+  MTurk$FourthDomain[i] <- ifelse(MTurk$DomainOrder4[i] == 1, "Disease", ifelse(MTurk$DomainOrder4[i] == 2, "Invest", ifelse(MTurk$DomainOrder4[i] == 3, "Wildfire", ifelse(MTurk$DomainOrder4[i] == 4, "Drought", NA))))
+}
+```
+
+```{r}
+# Get rid of column 1645 to 1713 
+MTurk <- MTurk[,-(1645:1718)]
+```
+
+## Preallocate columns for choice and rating questions
+```{r}
+MTurk$Cell <- NA
+MTurk$Order <- NA
+MTurk$Choice_Disease <- NA
+MTurk$Choice_Invest <- NA
+MTurk$Choice_Wildfire <- NA
+MTurk$Choice_Drought <- NA
+MTurk$Rate_Disease <- NA
+MTurk$Rate_Invest <- NA
+MTurk$Rate_Wildfire <- NA
+MTurk$Rate_Drought <- NA
+```
+
+## We go through each row (subject) and extract their answers to the preallocated 8 choice/rating columns.
+```{r, warning=F}
+# To achieve a balanced number of answers at each level of our VDA variable (VDA [-2, 2]; 3 cells=0, 2 cells=-1, 2 cells=+1, 1 cell=-2, 1 cell=+2, a total of 9 cells in our apples-to-apples framework), subjects were randomized to one of the 18 cells with unequal probabilities. 
+
+# To accomplish this, we had 2 blocks of questions of G1, 4 blocks of G2, 6 of G3, so on and so forth. With preallocation and other design, we have a total of 28 condition cells to check. 
+for (i in 1:dim(MTurk)[1]){
+  # One subject only gets one block of one condition cell. 
+  # Because we are stacking the answers, two blocks (or more) of the same condition cell is checked at the same time.
+  if (sum(MTurk$g1.0.1.1[i], MTurk$g1.0.2.1[i], MTurk$g1.0.3.1[i], MTurk$g1.0.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$g1.0.1.2[i], MTurk$g1.0.2.2[i], MTurk$g1.0.3.2[i], MTurk$g1.0.4.2[i], na.rm = TRUE) > 0){
+    # Between-subject
+    MTurk$Cell[i] <- 'G1'
+    MTurk$Order[i] <- 0
+    # Only one black contains answers
+    # na.rm = T take care of missing values
+    MTurk$Choice_Disease[i]  = max(MTurk$g1.0.1.1[i], MTurk$g1.0.1.2[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$g1.0.2.1[i], MTurk$g1.0.2.2[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$g1.0.3.1[i], MTurk$g1.0.3.2[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$g1.0.4.1[i], MTurk$g1.0.4.2[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xg1.0.1.1[i], MTurk$xg1.0.1.2[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xg1.0.2.1[i], MTurk$xg1.0.2.2[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xg1.0.3.1[i], MTurk$xg1.0.3.2[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xg1.0.4.1[i], MTurk$xg1.0.4.2[i], na.rm = T) - 4 
+  }
+  else if(sum(MTurk$g2.1.1.1[i], MTurk$g2.1.2.1[i], MTurk$g2.1.3.1[i], MTurk$g2.1.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$g2.1.1.2[i], MTurk$g2.1.2.2[i], MTurk$g2.1.3.2[i], MTurk$g2.1.4.2[i], na.rm = TRUE) > 0){
+    MTurk$Cell[i] <- 'G2'
+    MTurk$Order[i] <- -0.5
+    MTurk$Choice_Disease[i]  = max(MTurk$g2.1.1.1[i], MTurk$g2.1.1.2[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$g2.1.2.1[i], MTurk$g2.1.2.2[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$g2.1.3.1[i], MTurk$g2.1.3.2[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$g2.1.4.1[i], MTurk$g2.1.4.2[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xg2.1.1.1[i], MTurk$xg2.1.1.2[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xg2.1.2.1[i], MTurk$xg2.1.2.2[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xg2.1.3.1[i], MTurk$xg2.1.3.2[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xg2.1.4.1[i], MTurk$xg2.1.4.2[i], na.rm = T) - 4 
+  }
+  else if(sum(MTurk$g2.2.1.1[i], MTurk$g2.2.2.1[i], MTurk$g2.2.3.1[i], MTurk$g2.2.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$g2.2.1.2[i], MTurk$g2.2.2.2[i], MTurk$g2.2.3.2[i], MTurk$g2.2.4.2[i], na.rm = TRUE) > 0){
+    MTurk$Cell[i] <- 'G2'
+    MTurk$Order[i] <- 0.5
+    MTurk$Choice_Disease[i]  = max(MTurk$g2.2.1.1[i], MTurk$g2.2.1.2[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$g2.2.2.1[i], MTurk$g2.2.2.2[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$g2.2.3.1[i], MTurk$g2.2.3.2[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$g2.2.4.1[i], MTurk$g2.2.4.2[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xg2.2.1.1[i], MTurk$xg2.2.1.2[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xg2.2.2.1[i], MTurk$xg2.2.2.2[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xg2.2.3.1[i], MTurk$xg2.2.3.2[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xg2.2.4.1[i], MTurk$xg2.2.4.2[i], na.rm = T) - 4 
+  }
+  else if(sum(MTurk$g3.0.1.1[i], MTurk$g3.0.2.1[i], MTurk$g3.0.3.1[i], MTurk$g3.0.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$g3.0.1.2[i], MTurk$g3.0.2.2[i], MTurk$g3.0.3.2[i], MTurk$g3.0.4.2[i], na.rm = TRUE) > 0 | sum(MTurk$g3.0.1.3[i], MTurk$g3.0.2.3[i], MTurk$g3.0.3.3[i], MTurk$g3.0.4.3[i], na.rm = TRUE) > 0 | sum(MTurk$g3.0.1.4[i], MTurk$g3.0.2.4[i], MTurk$g3.0.3.4[i], MTurk$g3.0.4.4[i], na.rm = TRUE) > 0 | sum(MTurk$g3.0.1.5[i], MTurk$g3.0.2.5[i], MTurk$g3.0.3.5[i], MTurk$g3.0.4.5[i], na.rm = TRUE) > 0 | sum(MTurk$g3.0.1.6[i], MTurk$g3.0.2.6[i], MTurk$g3.0.3.6[i], MTurk$g3.0.4.6[i], na.rm = TRUE) > 0){
+    MTurk$Cell[i] <- 'G3'
+    MTurk$Order[i] <- 0
+    MTurk$Choice_Disease[i]  = max(MTurk$g3.0.1.1[i], MTurk$g3.0.1.2[i], MTurk$g3.0.1.3[i], MTurk$g3.0.1.4[i], MTurk$g3.0.1.5[i], MTurk$g3.0.1.6[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$g3.0.2.1[i], MTurk$g3.0.2.2[i], MTurk$g3.0.2.3[i], MTurk$g3.0.2.4[i], MTurk$g3.0.2.5[i], MTurk$g3.0.2.6[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$g3.0.3.1[i], MTurk$g3.0.3.2[i], MTurk$g3.0.3.3[i], MTurk$g3.0.3.4[i], MTurk$g3.0.3.5[i], MTurk$g3.0.3.6[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$g3.0.4.1[i], MTurk$g3.0.4.2[i], MTurk$g3.0.4.3[i], MTurk$g3.0.4.4[i], MTurk$g3.0.4.5[i], MTurk$g3.0.4.6[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xg3.0.1.1[i], MTurk$xg3.0.1.2[i], MTurk$xg3.0.1.3[i], MTurk$xg3.0.1.4[i], MTurk$xg3.0.1.5[i], MTurk$xg3.0.1.6[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xg3.0.2.1[i], MTurk$xg3.0.2.2[i], MTurk$xg3.0.2.3[i], MTurk$xg3.0.2.4[i], MTurk$xg3.0.2.5[i], MTurk$xg3.0.2.6[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xg3.0.3.1[i], MTurk$xg3.0.3.2[i], MTurk$xg3.0.3.3[i], MTurk$xg3.0.3.4[i], MTurk$xg3.0.3.5[i], MTurk$xg3.0.3.6[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xg3.0.4.1[i], MTurk$xg3.0.4.2[i], MTurk$xg3.0.4.3[i], MTurk$xg3.0.4.4[i], MTurk$xg3.0.4.5[i], MTurk$xg3.0.4.6[i], na.rm = T) - 4 
+  }
+  else if(sum(MTurk$g4.1.1.1[i], MTurk$g4.1.2.1[i], MTurk$g4.1.3.1[i], MTurk$g4.1.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$g4.1.1.2[i], MTurk$g4.1.2.2[i], MTurk$g4.1.3.2[i], MTurk$g4.1.4.2[i], na.rm = TRUE) > 0){
+    MTurk$Cell[i] <- 'G4'
+    MTurk$Order[i] <- 0.5
+    MTurk$Choice_Disease[i]  = max(MTurk$g4.1.1.1[i], MTurk$g4.1.1.2[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$g4.1.2.1[i], MTurk$g4.1.2.2[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$g4.1.3.1[i], MTurk$g4.1.3.2[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$g4.1.4.1[i], MTurk$g4.1.4.2[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xg4.1.1.1[i], MTurk$xg4.1.1.2[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xg4.1.2.1[i], MTurk$xg4.1.2.2[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xg4.1.3.1[i], MTurk$xg4.1.3.2[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xg4.1.4.1[i], MTurk$xg4.1.4.2[i], na.rm = T) - 4 
+  }
+  else if(sum(MTurk$g4.2.1.1[i], MTurk$g4.2.2.1[i], MTurk$g4.2.3.1[i], MTurk$g4.2.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$g4.2.1.2[i], MTurk$g4.2.2.2[i], MTurk$g4.2.3.2[i], MTurk$g4.2.4.2[i], na.rm = TRUE) > 0){
+    MTurk$Cell[i] <- 'G4'
+    MTurk$Order[i] <- -0.5
+    MTurk$Choice_Disease[i]  = max(MTurk$g4.2.1.1[i], MTurk$g4.2.1.2[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$g4.2.2.1[i], MTurk$g4.2.2.2[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$g4.2.3.1[i], MTurk$g4.2.3.2[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$g4.2.4.1[i], MTurk$g4.2.4.2[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xg4.2.1.1[i], MTurk$xg4.2.1.2[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xg4.2.2.1[i], MTurk$xg4.2.2.2[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xg4.2.3.1[i], MTurk$xg4.2.3.2[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xg4.2.4.1[i], MTurk$xg4.2.4.2[i], na.rm = T) - 4 
+  }
+  else if (sum(MTurk$g5.1.1.1[i], MTurk$g5.1.2.1[i], MTurk$g5.1.3.1[i], MTurk$g5.1.4.1[i], na.rm = TRUE) > 1){
+    MTurk$Cell[i] <- 'G5'
+    MTurk$Order[i] <- 0
+    MTurk$Choice_Disease[i]  = MTurk$g5.1.1.1[i] - 1 
+    MTurk$Choice_Invest[i]   = MTurk$g5.1.2.1[i] - 1 
+    MTurk$Choice_Wildfire[i] = MTurk$g5.1.3.1[i] - 1 
+    MTurk$Choice_Drought[i]  = MTurk$g5.1.4.1[i] - 1
+    MTurk$Rate_Disease[i]  = MTurk$xg5.1.1.1[i] - 4 
+    MTurk$Rate_Invest[i]   = MTurk$xg5.1.2.1[i] - 4 
+    MTurk$Rate_Wildfire[i] = MTurk$xg5.1.3.1[i] - 4 
+    MTurk$Rate_Drought[i]  = MTurk$xg5.1.4.1[i] - 4 
+  }
+  else if (sum(MTurk$g5.2.1.1[i], MTurk$g5.2.2.1[i], MTurk$g5.2.3.1[i], MTurk$g5.2.4.1[i], na.rm = TRUE) > 1){
+    MTurk$Cell[i] <- 'G5'
+    MTurk$Order[i] <- 0
+    MTurk$Choice_Disease[i]  = MTurk$g5.2.1.1[i] - 1 
+    MTurk$Choice_Invest[i]   = MTurk$g5.2.2.1[i] - 1 
+    MTurk$Choice_Wildfire[i] = MTurk$g5.2.3.1[i] - 1 
+    MTurk$Choice_Drought[i]  = MTurk$g5.2.4.1[i] - 1
+    MTurk$Rate_Disease[i]  = MTurk$xg5.2.1.1[i] - 4 
+    MTurk$Rate_Invest[i]   = MTurk$xg5.2.2.1[i] - 4 
+    MTurk$Rate_Wildfire[i] = MTurk$xg5.2.3.1[i] - 4 
+    MTurk$Rate_Drought[i]  = MTurk$xg5.2.4.1[i] - 4 
+  }
+  else if(sum(MTurk$g6.1.1.1[i], MTurk$g6.1.2.1[i], MTurk$g6.1.3.1[i], MTurk$g6.1.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$g6.1.1.2[i], MTurk$g6.1.2.2[i], MTurk$g6.1.3.2[i], MTurk$g6.1.4.2[i], na.rm = TRUE) > 0){
+    MTurk$Cell[i] <- 'G6'
+    MTurk$Order[i] <- 0.5
+    MTurk$Choice_Disease[i]  = max(MTurk$g6.1.1.1[i], MTurk$g6.1.1.2[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$g6.1.2.1[i], MTurk$g6.1.2.2[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$g6.1.3.1[i], MTurk$g6.1.3.2[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$g6.1.4.1[i], MTurk$g6.1.4.2[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xg6.1.1.1[i], MTurk$xg6.1.1.2[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xg6.1.2.1[i], MTurk$xg6.1.2.2[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xg6.1.3.1[i], MTurk$xg6.1.3.2[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xg6.1.4.1[i], MTurk$xg6.1.4.2[i], na.rm = T) - 4 
+  }
+  else if(sum(MTurk$g6.2.1.1[i], MTurk$g6.2.2.1[i], MTurk$g6.2.3.1[i], MTurk$g6.2.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$g6.2.1.2[i], MTurk$g6.2.2.2[i], MTurk$g6.2.3.2[i], MTurk$g6.2.4.2[i], na.rm = TRUE) > 0){
+    MTurk$Cell[i] <- 'G6'
+    MTurk$Order[i] <- -0.5
+    MTurk$Choice_Disease[i]  = max(MTurk$g6.2.1.1[i], MTurk$g6.2.1.2[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$g6.2.2.1[i], MTurk$g6.2.2.2[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$g6.2.3.1[i], MTurk$g6.2.3.2[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$g6.2.4.1[i], MTurk$g6.2.4.2[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xg6.2.1.1[i], MTurk$xg6.2.1.2[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xg6.2.2.1[i], MTurk$xg6.2.2.2[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xg6.2.3.1[i], MTurk$xg6.2.3.2[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xg6.2.4.1[i], MTurk$xg6.2.4.2[i], na.rm = T) - 4 
+  }
+  else if(sum(MTurk$g7.0.1.1[i], MTurk$g7.0.2.1[i], MTurk$g7.0.3.1[i], MTurk$g7.0.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$g7.0.1.2[i], MTurk$g7.0.2.2[i], MTurk$g7.0.3.2[i], MTurk$g7.0.4.2[i], na.rm = TRUE) > 0 | sum(MTurk$g7.0.1.3[i], MTurk$g7.0.2.3[i], MTurk$g7.0.3.3[i], MTurk$g7.0.4.3[i], na.rm = TRUE) > 0 | sum(MTurk$g7.0.1.4[i], MTurk$g7.0.2.4[i], MTurk$g7.0.3.4[i], MTurk$g7.0.4.4[i], na.rm = TRUE) > 0 | sum(MTurk$g7.0.1.5[i], MTurk$g7.0.2.5[i], MTurk$g7.0.3.5[i], MTurk$g7.0.4.5[i], na.rm = TRUE) > 0 | sum(MTurk$g7.0.1.6[i], MTurk$g7.0.2.6[i], MTurk$g7.0.3.6[i], MTurk$g7.0.4.6[i], na.rm = TRUE) > 0){
+    MTurk$Cell[i] <- 'G7'
+    MTurk$Order[i] <- 0
+    MTurk$Choice_Disease[i]  = max(MTurk$g7.0.1.1[i], MTurk$g7.0.1.2[i], MTurk$g7.0.1.3[i], MTurk$g7.0.1.4[i], MTurk$g7.0.1.5[i], MTurk$g7.0.1.6[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$g7.0.2.1[i], MTurk$g7.0.2.2[i], MTurk$g7.0.2.3[i], MTurk$g7.0.2.4[i], MTurk$g7.0.2.5[i], MTurk$g7.0.2.6[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$g7.0.3.1[i], MTurk$g7.0.3.2[i], MTurk$g7.0.3.3[i], MTurk$g7.0.3.4[i], MTurk$g7.0.3.5[i], MTurk$g7.0.3.6[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$g7.0.4.1[i], MTurk$g7.0.4.2[i], MTurk$g7.0.4.3[i], MTurk$g7.0.4.4[i], MTurk$g7.0.4.5[i], MTurk$g7.0.4.6[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xg7.0.1.1[i], MTurk$xg7.0.1.2[i], MTurk$xg7.0.1.3[i], MTurk$xg7.0.1.4[i], MTurk$xg7.0.1.5[i], MTurk$xg7.0.1.6[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xg7.0.2.1[i], MTurk$xg7.0.2.2[i], MTurk$xg7.0.2.3[i], MTurk$xg7.0.2.4[i], MTurk$xg7.0.2.5[i], MTurk$xg7.0.2.6[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xg7.0.3.1[i], MTurk$xg7.0.3.2[i], MTurk$xg7.0.3.3[i], MTurk$xg7.0.3.4[i], MTurk$xg7.0.3.5[i], MTurk$xg7.0.3.6[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xg7.0.4.1[i], MTurk$xg7.0.4.2[i], MTurk$xg7.0.4.3[i], MTurk$xg7.0.4.4[i], MTurk$xg7.0.4.5[i], MTurk$xg7.0.4.6[i], na.rm = T) - 4 
+  }
+  else if(sum(MTurk$g8.1.1.1[i], MTurk$g8.1.2.1[i], MTurk$g8.1.3.1[i], MTurk$g8.1.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$g8.1.1.2[i], MTurk$g8.1.2.2[i], MTurk$g8.1.3.2[i], MTurk$g8.1.4.2[i], na.rm = TRUE) > 0){
+    MTurk$Cell[i] <- 'G8'
+    MTurk$Order[i] <- -0.5
+    MTurk$Choice_Disease[i]  = max(MTurk$g8.1.1.1[i], MTurk$g8.1.1.2[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$g8.1.2.1[i], MTurk$g8.1.2.2[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$g8.1.3.1[i], MTurk$g8.1.3.2[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$g8.1.4.1[i], MTurk$g8.1.4.2[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xg8.1.1.1[i], MTurk$xg8.1.1.2[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xg8.1.2.1[i], MTurk$xg8.1.2.2[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xg8.1.3.1[i], MTurk$xg8.1.3.2[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xg8.1.4.1[i], MTurk$xg8.1.4.2[i], na.rm = T) - 4 
+  }
+  else if(sum(MTurk$g8.2.1.1[i], MTurk$g8.2.2.1[i], MTurk$g8.2.3.1[i], MTurk$g8.2.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$g8.2.1.2[i], MTurk$g8.2.2.2[i], MTurk$g8.2.3.2[i], MTurk$g8.2.4.2[i], na.rm = TRUE) > 0){
+    MTurk$Cell[i] <- 'G8'
+    MTurk$Order[i] <- 0.5
+    MTurk$Choice_Disease[i]  = max(MTurk$g8.2.1.1[i], MTurk$g8.2.1.2[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$g8.2.2.1[i], MTurk$g8.2.2.2[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$g8.2.3.1[i], MTurk$g8.2.3.2[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$g8.2.4.1[i], MTurk$g8.2.4.2[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xg8.2.1.1[i], MTurk$xg8.2.1.2[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xg8.2.2.1[i], MTurk$xg8.2.2.2[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xg8.2.3.1[i], MTurk$xg8.2.3.2[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xg8.2.4.1[i], MTurk$xg8.2.4.2[i], na.rm = T) - 4 
+  }
+  else if (sum(MTurk$g9.0.1.1[i], MTurk$g9.0.2.1[i], MTurk$g9.0.3.1[i], MTurk$g9.0.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$g9.0.1.2[i], MTurk$g9.0.2.2[i], MTurk$g9.0.3.2[i], MTurk$g9.0.4.2[i], na.rm = TRUE) > 0){
+    MTurk$Cell[i] <- 'G9'
+    MTurk$Order[i] <- 0
+    MTurk$Choice_Disease[i]  = max(MTurk$g9.0.1.1[i], MTurk$g9.0.1.2[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$g9.0.2.1[i], MTurk$g9.0.2.2[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$g9.0.3.1[i], MTurk$g9.0.3.2[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$g9.0.4.1[i], MTurk$g9.0.4.2[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xg9.0.1.1[i], MTurk$xg9.0.1.2[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xg9.0.2.1[i], MTurk$xg9.0.2.2[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xg9.0.3.1[i], MTurk$xg9.0.3.2[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xg9.0.4.1[i], MTurk$xg9.0.4.2[i], na.rm = T) - 4 
+  }
+  else if (sum(MTurk$l1.0.1.1[i], MTurk$l1.0.2.1[i], MTurk$l1.0.3.1[i], MTurk$l1.0.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$l1.0.1.2[i], MTurk$l1.0.2.2[i], MTurk$l1.0.3.2[i], MTurk$l1.0.4.2[i], na.rm = TRUE) > 0){
+    MTurk$Cell[i] <- 'L1'
+    MTurk$Order[i] <- 0
+    MTurk$Choice_Disease[i]  = max(MTurk$l1.0.1.1[i], MTurk$l1.0.1.2[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$l1.0.2.1[i], MTurk$l1.0.2.2[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$l1.0.3.1[i], MTurk$l1.0.3.2[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$l1.0.4.1[i], MTurk$l1.0.4.2[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xl1.0.1.1[i], MTurk$xl1.0.1.2[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xl1.0.2.1[i], MTurk$xl1.0.2.2[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xl1.0.3.1[i], MTurk$xl1.0.3.2[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xl1.0.4.1[i], MTurk$xl1.0.4.2[i], na.rm = T) - 4 
+  }
+  else if(sum(MTurk$l2.1.1.1[i], MTurk$l2.1.2.1[i], MTurk$l2.1.3.1[i], MTurk$l2.1.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$l2.1.1.2[i], MTurk$l2.1.2.2[i], MTurk$l2.1.3.2[i], MTurk$l2.1.4.2[i], na.rm = TRUE) > 0){
+    MTurk$Cell[i] <- 'L2'
+    MTurk$Order[i] <- -0.5
+    MTurk$Choice_Disease[i]  = max(MTurk$l2.1.1.1[i], MTurk$l2.1.1.2[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$l2.1.2.1[i], MTurk$l2.1.2.2[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$l2.1.3.1[i], MTurk$l2.1.3.2[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$l2.1.4.1[i], MTurk$l2.1.4.2[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xl2.1.1.1[i], MTurk$xl2.1.1.2[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xl2.1.2.1[i], MTurk$xl2.1.2.2[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xl2.1.3.1[i], MTurk$xl2.1.3.2[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xl2.1.4.1[i], MTurk$xl2.1.4.2[i], na.rm = T) - 4 
+  }
+  else if(sum(MTurk$l2.2.1.1[i], MTurk$l2.2.2.1[i], MTurk$l2.2.3.1[i], MTurk$l2.2.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$l2.2.1.2[i], MTurk$l2.2.2.2[i], MTurk$l2.2.3.2[i], MTurk$l2.2.4.2[i], na.rm = TRUE) > 0){
+    MTurk$Cell[i] <- 'L2'
+    MTurk$Order[i] <- 0.5
+    MTurk$Choice_Disease[i]  = max(MTurk$l2.2.1.1[i], MTurk$l2.2.1.2[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$l2.2.2.1[i], MTurk$l2.2.2.2[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$l2.2.3.1[i], MTurk$l2.2.3.2[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$l2.2.4.1[i], MTurk$l2.2.4.2[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xl2.2.1.1[i], MTurk$xl2.2.1.2[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xl2.2.2.1[i], MTurk$xl2.2.2.2[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xl2.2.3.1[i], MTurk$xl2.2.3.2[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xl2.2.4.1[i], MTurk$xl2.2.4.2[i], na.rm = T) - 4 
+  }
+  else if(sum(MTurk$l3.0.1.1[i], MTurk$l3.0.2.1[i], MTurk$l3.0.3.1[i], MTurk$l3.0.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$l3.0.1.2[i], MTurk$l3.0.2.2[i], MTurk$l3.0.3.2[i], MTurk$l3.0.4.2[i], na.rm = TRUE) > 0 | sum(MTurk$l3.0.1.3[i], MTurk$l3.0.2.3[i], MTurk$l3.0.3.3[i], MTurk$l3.0.4.3[i], na.rm = TRUE) > 0 | sum(MTurk$l3.0.1.4[i], MTurk$l3.0.2.4[i], MTurk$l3.0.3.4[i], MTurk$l3.0.4.4[i], na.rm = TRUE) > 0 | sum(MTurk$l3.0.1.5[i], MTurk$l3.0.2.5[i], MTurk$l3.0.3.5[i], MTurk$l3.0.4.5[i], na.rm = TRUE) > 0 | sum(MTurk$l3.0.1.6[i], MTurk$l3.0.2.6[i], MTurk$l3.0.3.6[i], MTurk$l3.0.4.6[i], na.rm = TRUE) > 0){
+    MTurk$Cell[i] <- 'L3'
+    MTurk$Order[i] <- 0
+    MTurk$Choice_Disease[i]  = max(MTurk$l3.0.1.1[i], MTurk$l3.0.1.2[i], MTurk$l3.0.1.3[i], MTurk$l3.0.1.4[i], MTurk$l3.0.1.5[i], MTurk$l3.0.1.6[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$l3.0.2.1[i], MTurk$l3.0.2.2[i], MTurk$l3.0.2.3[i], MTurk$l3.0.2.4[i], MTurk$l3.0.2.5[i], MTurk$l3.0.2.6[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$l3.0.3.1[i], MTurk$l3.0.3.2[i], MTurk$l3.0.3.3[i], MTurk$l3.0.3.4[i], MTurk$l3.0.3.5[i], MTurk$l3.0.3.6[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$l3.0.4.1[i], MTurk$l3.0.4.2[i], MTurk$l3.0.4.3[i], MTurk$l3.0.4.4[i], MTurk$l3.0.4.5[i], MTurk$l3.0.4.6[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xl3.0.1.1[i], MTurk$xl3.0.1.2[i], MTurk$xl3.0.1.3[i], MTurk$xl3.0.1.4[i], MTurk$xl3.0.1.5[i], MTurk$xl3.0.1.6[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xl3.0.2.1[i], MTurk$xl3.0.2.2[i], MTurk$xl3.0.2.3[i], MTurk$xl3.0.2.4[i], MTurk$xl3.0.2.5[i], MTurk$xl3.0.2.6[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xl3.0.3.1[i], MTurk$xl3.0.3.2[i], MTurk$xl3.0.3.3[i], MTurk$xl3.0.3.4[i], MTurk$xl3.0.3.5[i], MTurk$xl3.0.3.6[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xl3.0.4.1[i], MTurk$xl3.0.4.2[i], MTurk$xl3.0.4.3[i], MTurk$xl3.0.4.4[i], MTurk$xl3.0.4.5[i], MTurk$xl3.0.4.6[i], na.rm = T) - 4 
+  }
+  else if(sum(MTurk$l4.1.1.1[i], MTurk$l4.1.2.1[i], MTurk$l4.1.3.1[i], MTurk$l4.1.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$l4.1.1.2[i], MTurk$l4.1.2.2[i], MTurk$l4.1.3.2[i], MTurk$l4.1.4.2[i], na.rm = TRUE) > 0){
+    MTurk$Cell[i] <- 'L4'
+    MTurk$Order[i] <- 0.5
+    MTurk$Choice_Disease[i]  = max(MTurk$l4.1.1.1[i], MTurk$l4.1.1.2[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$l4.1.2.1[i], MTurk$l4.1.2.2[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$l4.1.3.1[i], MTurk$l4.1.3.2[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$l4.1.4.1[i], MTurk$l4.1.4.2[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xl4.1.1.1[i], MTurk$xl4.1.1.2[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xl4.1.2.1[i], MTurk$xl4.1.2.2[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xl4.1.3.1[i], MTurk$xl4.1.3.2[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xl4.1.4.1[i], MTurk$xl4.1.4.2[i], na.rm = T) - 4 
+  }
+  else if(sum(MTurk$l4.2.1.1[i], MTurk$l4.2.2.1[i], MTurk$l4.2.3.1[i], MTurk$l4.2.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$l4.2.1.2[i], MTurk$l4.2.2.2[i], MTurk$l4.2.3.2[i], MTurk$l4.2.4.2[i], na.rm = TRUE) > 0){
+    MTurk$Cell[i] <- 'L4'
+    MTurk$Order[i] <- -0.5
+    MTurk$Choice_Disease[i]  = max(MTurk$l4.2.1.1[i], MTurk$l4.2.1.2[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$l4.2.2.1[i], MTurk$l4.2.2.2[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$l4.2.3.1[i], MTurk$l4.2.3.2[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$l4.2.4.1[i], MTurk$l4.2.4.2[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xl4.2.1.1[i], MTurk$xl4.2.1.2[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xl4.2.2.1[i], MTurk$xl4.2.2.2[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xl4.2.3.1[i], MTurk$xl4.2.3.2[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xl4.2.4.1[i], MTurk$xl4.2.4.2[i], na.rm = T) - 4 
+  }
+  else if (sum(MTurk$l5.1.1.1[i], MTurk$l5.1.2.1[i], MTurk$l5.1.3.1[i], MTurk$l5.1.4.1[i], na.rm = TRUE) > 1){
+    MTurk$Cell[i] <- 'L5'
+    MTurk$Order[i] <- 0
+    MTurk$Choice_Disease[i]  = MTurk$l5.1.1.1[i] - 1 
+    MTurk$Choice_Invest[i]   = MTurk$l5.1.2.1[i] - 1 
+    MTurk$Choice_Wildfire[i] = MTurk$l5.1.3.1[i] - 1 
+    MTurk$Choice_Drought[i]  = MTurk$l5.1.4.1[i] - 1
+    MTurk$Rate_Disease[i]  = MTurk$xl5.1.1.1[i] - 4 
+    MTurk$Rate_Invest[i]   = MTurk$xl5.1.2.1[i] - 4 
+    MTurk$Rate_Wildfire[i] = MTurk$xl5.1.3.1[i] - 4 
+    MTurk$Rate_Drought[i]  = MTurk$xl5.1.4.1[i] - 4 
+  }
+  else if (sum(MTurk$l5.2.1.1[i], MTurk$l5.2.2.1[i], MTurk$l5.2.3.1[i], MTurk$l5.2.4.1[i], na.rm = TRUE) > 1){
+    MTurk$Cell[i] <- 'L5'
+    MTurk$Order[i] <- 0
+    MTurk$Choice_Disease[i]  = MTurk$l5.2.1.1[i] - 1 
+    MTurk$Choice_Invest[i]   = MTurk$l5.2.2.1[i] - 1 
+    MTurk$Choice_Wildfire[i] = MTurk$l5.2.3.1[i] - 1 
+    MTurk$Choice_Drought[i]  = MTurk$l5.2.4.1[i] - 1
+    MTurk$Rate_Disease[i]  = MTurk$xl5.2.1.1[i] - 4 
+    MTurk$Rate_Invest[i]   = MTurk$xl5.2.2.1[i] - 4 
+    MTurk$Rate_Wildfire[i] = MTurk$xl5.2.3.1[i] - 4 
+    MTurk$Rate_Drought[i]  = MTurk$xl5.2.4.1[i] - 4 
+  }
+  else if(sum(MTurk$l6.1.1.1[i], MTurk$l6.1.2.1[i], MTurk$l6.1.3.1[i], MTurk$l6.1.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$l6.1.1.2[i], MTurk$l6.1.2.2[i], MTurk$l6.1.3.2[i], MTurk$l6.1.4.2[i], na.rm = TRUE) > 0){
+    MTurk$Cell[i] <- 'L6'
+    MTurk$Order[i] <- 0.5
+    MTurk$Choice_Disease[i]  = max(MTurk$l6.1.1.1[i], MTurk$l6.1.1.2[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$l6.1.2.1[i], MTurk$l6.1.2.2[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$l6.1.3.1[i], MTurk$l6.1.3.2[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$l6.1.4.1[i], MTurk$l6.1.4.2[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xl6.1.1.1[i], MTurk$xl6.1.1.2[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xl6.1.2.1[i], MTurk$xl6.1.2.2[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xl6.1.3.1[i], MTurk$xl6.1.3.2[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xl6.1.4.1[i], MTurk$xl6.1.4.2[i], na.rm = T) - 4 
+  }
+  else if(sum(MTurk$l6.2.1.1[i], MTurk$l6.2.2.1[i], MTurk$l6.2.3.1[i], MTurk$l6.2.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$l6.2.1.2[i], MTurk$l6.2.2.2[i], MTurk$l6.2.3.2[i], MTurk$l6.2.4.2[i], na.rm = TRUE) > 0){
+    MTurk$Cell[i] <- 'L6'
+    MTurk$Order[i] <- -0.5
+    MTurk$Choice_Disease[i]  = max(MTurk$l6.2.1.1[i], MTurk$l6.2.1.2[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$l6.2.2.1[i], MTurk$l6.2.2.2[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$l6.2.3.1[i], MTurk$l6.2.3.2[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$l6.2.4.1[i], MTurk$l6.2.4.2[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xl6.2.1.1[i], MTurk$xl6.2.1.2[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xl6.2.2.1[i], MTurk$xl6.2.2.2[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xl6.2.3.1[i], MTurk$xl6.2.3.2[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xl6.2.4.1[i], MTurk$xl6.2.4.2[i], na.rm = T) - 4 
+  }
+  else if(sum(MTurk$l7.0.1.1[i], MTurk$l7.0.2.1[i], MTurk$l7.0.3.1[i], MTurk$l7.0.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$l7.0.1.2[i], MTurk$l7.0.2.2[i], MTurk$l7.0.3.2[i], MTurk$l7.0.4.2[i], na.rm = TRUE) > 0 | sum(MTurk$l7.0.1.3[i], MTurk$l7.0.2.3[i], MTurk$l7.0.3.3[i], MTurk$l7.0.4.3[i], na.rm = TRUE) > 0 | sum(MTurk$l7.0.1.4[i], MTurk$l7.0.2.4[i], MTurk$l7.0.3.4[i], MTurk$l7.0.4.4[i], na.rm = TRUE) > 0 | sum(MTurk$l7.0.1.5[i], MTurk$l7.0.2.5[i], MTurk$l7.0.3.5[i], MTurk$l7.0.4.5[i], na.rm = TRUE) > 0 | sum(MTurk$l7.0.1.6[i], MTurk$l7.0.2.6[i], MTurk$l7.0.3.6[i], MTurk$l7.0.4.6[i], na.rm = TRUE) > 0){
+    MTurk$Cell[i] <- 'L7'
+    MTurk$Order[i] <- 0
+    MTurk$Choice_Disease[i]  = max(MTurk$l7.0.1.1[i], MTurk$l7.0.1.2[i], MTurk$l7.0.1.3[i], MTurk$l7.0.1.4[i], MTurk$l7.0.1.5[i], MTurk$l7.0.1.6[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$l7.0.2.1[i], MTurk$l7.0.2.2[i], MTurk$l7.0.2.3[i], MTurk$l7.0.2.4[i], MTurk$l7.0.2.5[i], MTurk$l7.0.2.6[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$l7.0.3.1[i], MTurk$l7.0.3.2[i], MTurk$l7.0.3.3[i], MTurk$l7.0.3.4[i], MTurk$l7.0.3.5[i], MTurk$l7.0.3.6[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$l7.0.4.1[i], MTurk$l7.0.4.2[i], MTurk$l7.0.4.3[i], MTurk$l7.0.4.4[i], MTurk$l7.0.4.5[i], MTurk$l7.0.4.6[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xl7.0.1.1[i], MTurk$xl7.0.1.2[i], MTurk$xl7.0.1.3[i], MTurk$xl7.0.1.4[i], MTurk$xl7.0.1.5[i], MTurk$xl7.0.1.6[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xl7.0.2.1[i], MTurk$xl7.0.2.2[i], MTurk$xl7.0.2.3[i], MTurk$xl7.0.2.4[i], MTurk$xl7.0.2.5[i], MTurk$xl7.0.2.6[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xl7.0.3.1[i], MTurk$xl7.0.3.2[i], MTurk$xl7.0.3.3[i], MTurk$xl7.0.3.4[i], MTurk$xl7.0.3.5[i], MTurk$xl7.0.3.6[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xl7.0.4.1[i], MTurk$xl7.0.4.2[i], MTurk$xl7.0.4.3[i], MTurk$xl7.0.4.4[i], MTurk$xl7.0.4.5[i], MTurk$xl7.0.4.6[i], na.rm = T) - 4 
+  }
+  else if(sum(MTurk$l8.1.1.1[i], MTurk$l8.1.2.1[i], MTurk$l8.1.3.1[i], MTurk$l8.1.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$l8.1.1.2[i], MTurk$l8.1.2.2[i], MTurk$l8.1.3.2[i], MTurk$l8.1.4.2[i], na.rm = TRUE) > 0){
+    MTurk$Cell[i] <- 'L8'
+    MTurk$Order[i] <- -0.5
+    MTurk$Choice_Disease[i]  = max(MTurk$l8.1.1.1[i], MTurk$l8.1.1.2[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$l8.1.2.1[i], MTurk$l8.1.2.2[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$l8.1.3.1[i], MTurk$l8.1.3.2[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$l8.1.4.1[i], MTurk$l8.1.4.2[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xl8.1.1.1[i], MTurk$xl8.1.1.2[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xl8.1.2.1[i], MTurk$xl8.1.2.2[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xl8.1.3.1[i], MTurk$xl8.1.3.2[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xl8.1.4.1[i], MTurk$xl8.1.4.2[i], na.rm = T) - 4 
+  }
+  else if(sum(MTurk$l8.2.1.1[i], MTurk$l8.2.2.1[i], MTurk$l8.2.3.1[i], MTurk$l8.2.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$l8.2.1.2[i], MTurk$l8.2.2.2[i], MTurk$l8.2.3.2[i], MTurk$l8.2.4.2[i], na.rm = TRUE) > 0){
+    MTurk$Cell[i] <- 'L8'
+    MTurk$Order[i] <- 0.5
+    MTurk$Choice_Disease[i]  = max(MTurk$l8.2.1.1[i], MTurk$l8.2.1.2[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$l8.2.2.1[i], MTurk$l8.2.2.2[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$l8.2.3.1[i], MTurk$l8.2.3.2[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$l8.2.4.1[i], MTurk$l8.2.4.2[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xl8.2.1.1[i], MTurk$xl8.2.1.2[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xl8.2.2.1[i], MTurk$xl8.2.2.2[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xl8.2.3.1[i], MTurk$xl8.2.3.2[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xl8.2.4.1[i], MTurk$xl8.2.4.2[i], na.rm = T) - 4 
+  }
+  else if (sum(MTurk$l9.0.1.1[i], MTurk$l9.0.2.1[i], MTurk$l9.0.3.1[i], MTurk$l9.0.4.1[i], na.rm = TRUE) > 0 | sum(MTurk$l9.0.1.2[i], MTurk$l9.0.2.2[i], MTurk$l9.0.3.2[i], MTurk$l9.0.4.2[i], na.rm = TRUE) > 0){
+    MTurk$Cell[i] <- 'L9'
+    MTurk$Order[i] <- 0
+    MTurk$Choice_Disease[i]  = max(MTurk$l9.0.1.1[i], MTurk$l9.0.1.2[i], na.rm = T) - 1 
+    MTurk$Choice_Invest[i]   = max(MTurk$l9.0.2.1[i], MTurk$l9.0.2.2[i], na.rm = T) - 1 
+    MTurk$Choice_Wildfire[i] = max(MTurk$l9.0.3.1[i], MTurk$l9.0.3.2[i], na.rm = T) - 1 
+    MTurk$Choice_Drought[i]  = max(MTurk$l9.0.4.1[i], MTurk$l9.0.4.2[i], na.rm = T) - 1
+    MTurk$Rate_Disease[i]  = max(MTurk$xl9.0.1.1[i], MTurk$xl9.0.1.2[i], na.rm = T) - 4 
+    MTurk$Rate_Invest[i]   = max(MTurk$xl9.0.2.1[i], MTurk$xl9.0.2.2[i], na.rm = T) - 4 
+    MTurk$Rate_Wildfire[i] = max(MTurk$xl9.0.3.1[i], MTurk$xl9.0.3.2[i], na.rm = T) - 4 
+    MTurk$Rate_Drought[i]  = max(MTurk$xl9.0.4.1[i], MTurk$xl9.0.4.2[i], na.rm = T) - 4 
+  }
+  else{
+    MTurk$Cell[i] <- NA
+    MTurk$Order[i] <- NA
+    MTurk$Choice_Disease[i]  = NA 
+    MTurk$Choice_Invest[i]   = NA 
+    MTurk$Choice_Wildfire[i] = NA 
+    MTurk$Choice_Drought[i]  = NA
+    MTurk$Rate_Disease[i]  = NA 
+    MTurk$Rate_Invest[i]   = NA
+    MTurk$Rate_Wildfire[i] = NA 
+    MTurk$Rate_Drought[i]  = NA
+  }
+}
+```
+
+## New Dataframe "MTurkNew" contains only columns (variables) that are useful for the analysis
+```{r,echo=FALSE}
+MTurkNew <- MTurk[,c(1:14,1645:1658,1638:1642)]
+MTurkNew[29:33]
+# rename the demographic columns
+names(MTurkNew)[29:33] <- c("Gender","Race","OtherRace","IsHispanic","Age")
+# Before excluding anyone, assign an ID
+MTurkNew$ID <- seq.int(nrow(MTurkNew))
+```
+
+------------------------------------------- Subject Exclusion Process Starts. ---------------------------------------------------------------------------
+Data Cleaning Step 1
+
+## Exclude subjects with 0 question answered.
+```{r,echo=F,warning=F}
+list <- which(rowSums(is.na(MTurkNew[,21:28])) == ncol(MTurkNew[,21:28]))
+list
+# Check their answers, make sure no one was excluded unnecessarily 
+MTurkNew[rowSums(is.na(MTurkNew[,21:28])) == ncol(MTurkNew[,21:28]), 21:28]
+```
+
+## 16 subjects (ID 57  151  187  206  372  439  534 1008 1010 1012 1013 1015 1018 1020 1021 1025 1026) were excluded
+## This step shrinked the raw data to useful data with sample size n = 1010
+```{r,echo=FALSE}
+dim(MTurkNew)[1]
+MTurkNew <- MTurkNew[-list,]
+dim(MTurkNew)[1]
+```
+
+Data Cleaning Step 2
+
+## Qualtrics built-in checks
+## First RecapchaScore excluded 2; relevantIDDuplicateScore exluded 7; Fraud excluded 32
+## n = 969
+```{r, include = F}
+MTurkNew[is.na(MTurkNew$Q_RecaptchaScore),c(11,34,6,21:28)]
+# Pay extra attention to the NAs, physically check the rows before excluding them
+MTurkNew[(MTurkNew$Q_RecaptchaScore < 0.5 & !is.na(MTurkNew$Q_RecaptchaScore)),c(11,34,6,21:28)]
+MTurkNew[(MTurkNew$Q_RelevantIDDuplicateScore >= 75 & !is.na(MTurkNew$Q_RelevantIDDuplicateScore)),c(11,34,6,21:28)]
+MTurkNew[(MTurkNew$Q_RelevantIDFraudScore >= 30 & !is.na(MTurkNew$Q_RelevantIDFraudScore)),c(11,34,6,21:28)]
+```
+
+```{r}
+dim(MTurkNew)[1]
+MTurkNew <- MTurkNew[-which(MTurkNew$Q_RecaptchaScore < 0.5 & !is.na(MTurkNew$Q_RecaptchaScore)),]
+dim(MTurkNew)[1]
+# remove duplicates
+MTurkNew <- MTurkNew[-which(MTurkNew$Q_RelevantIDDuplicateScore >= 75 & !is.na(MTurkNew$Q_RelevantIDDuplicateScore)),]
+dim(MTurkNew)[1]
+MTurkNew <- MTurkNew[-which(MTurkNew$Q_RelevantIDFraudScore >= 30 & !is.na(MTurkNew$Q_RelevantIDFraudScore)),]
+dim(MTurkNew)[1]
+```
+
+## Demographic info for thesis results section
+```{r}
+summary(MTurkNew$Age)
+```
+
+## Update the NAs to -Inf for future exclusions
+```{r,echo=FALSE, warning=F}
+MTurkNew[19:28][is.na(MTurkNew[19:28])] <- -Inf
+MTurkNew[414:418,c(6,19:28)]
+MTurk[419:423,c(6,1649:1658)]
+```
+
+
+Data Cleaning Step 3
+
+## Delete subjects who finished in more than 2.5 SDs above or below the mean completion time.
+## Because the original duration variable is positively skewed, I used Box-Cox transformation.
+```{r,echo=FALSE}
+names(MTurkNew)[names(MTurkNew) == 'Duration (in seconds)'] = 'Duration'
+plotNormalHistogram(MTurkNew$Duration)
+qqnorm(MTurkNew$Duration, ylab = "Duration")
+qqline(MTurkNew$Duration, col = "red")
+
+Box = boxcox(MTurkNew$Duration ~ 1, lambda = seq(-3,3))
+lambda = Box$x[which(Box$y == max(Box$y))]
+# lambda  
+# -0.2727273
+
+MTurkNew$t_duration = (MTurkNew$Duration^lambda - 1)/lambda
+plotNormalHistogram(MTurkNew$t_duration)
+
+# 2.726944
+mean_d <- mean(MTurkNew$t_duration)
+# mean_d
+
+# 0.1397445
+sd_d <- sd(MTurkNew$t_duration)
+# sd_d
+
+low_dura <- mean_d - 2.5*sd_d
+# low_dura 
+# 2.5sd, 2.377582
+high_dura <- mean_d + 2.5*sd_d
+# high_dura
+# 2.5sd, 3.076305
+```
+
+```{r, include=F}
+# Inverse transformation of box-cox coefficients to duration (in seconds) to check the cutoffs
+DurationMin = (lambda*low_dura + 1)^(1/(lambda))
+DurationMax = (lambda*high_dura + 1)^(1/(lambda))
+DurationMin
+DurationMax
+```
+
+```{r,echo=FALSE}
+# Similarly, double check the excluded rows
+dim(MTurkNew[MTurkNew$Duration < DurationMin, c(6,19:28)])[1]
+MTurkNew[MTurkNew$Duration < DurationMin, c(6,19:28)]
+dim(MTurkNew[MTurkNew$Duration > DurationMax, c(6,19:28)])[1]
+MTurkNew[MTurkNew$Duration > DurationMax, c(6,19:28)]
+```
+
+```{r,echo=FALSE}
+# Less accurate way to find the 2.5 std cutoffs: quantiles. 
+duration = MTurkNew$Duration    
+quantile(duration, c(0.0062,0.9938)) 
+```
+
+```{r,echo=FALSE}
+dim(MTurkNew)
+# less than 2.5sd: 8 excluded
+MTurkNew <- MTurkNew[which(MTurkNew$t_duration >= low_dura), ]
+dim(MTurkNew)
+# more than 2.5sd: 6 excluded
+MTurkNew <- MTurkNew[which(MTurkNew$t_duration <= high_dura), ]
+dim(MTurkNew)
+```
+
+## In SAS, subject ID 798 was deleted becuase the box-cox routine in SAS returned a smaller upper cutoff.
+## Per checking their answers, it's reasonable to keep them in the sample.
+```{r,echo=FALSE}
+MTurkNew[MTurkNew$Duration == 798, c(34,5,6,19:28)]
+```
+
+
+
+Data Cleaning Step 4
+
+## Exclude subjects whose completion time is less than 60 seconds.
+```{r,echo=FALSE}
+# < 60 sec: 955-938=17 excluded
+MTurkNew <- MTurkNew[-which(MTurkNew$Duration < 60), ]
+dim(MTurkNew)
+```
+
+## Run once to assign each row one Frame & one VDA attribuate 
+```{r,echo=FALSE}
+for (i in 1:dim(MTurkNew)[1]){
+  # Attribute "Cell" in MTurkNew contains information on frame & cell number
+  # Ex: G6
+  if(str_contains(MTurkNew$Cell[i],'G')){
+    MTurkNew$Frame[i] = 'Gain'
+  }else if(str_contains(MTurkNew$Cell[i],'L')){
+    MTurkNew$Frame[i] = 'Loss'
+  }else{
+    MTurkNew$Frame[i] = NA
+  }
+  # 5 levels of VDA for 9 cells
+  if(str_contains(MTurkNew$Cell[i],1) | str_contains(MTurkNew$Cell[i],5) | str_contains(MTurkNew$Cell[i],9)){
+    MTurkNew$VDA[i] = 0
+  }else if(str_contains(MTurkNew$Cell[i],2) | str_contains(MTurkNew$Cell[i],6)){
+    MTurkNew$VDA[i] = 1
+  }else if(str_contains(MTurkNew$Cell[i],4) | str_contains(MTurkNew$Cell[i],8)){
+    MTurkNew$VDA[i] = -1
+  }else if(str_contains(MTurkNew$Cell[i],3)){
+    MTurkNew$VDA[i] = 2
+  }else if(str_contains(MTurkNew$Cell[i],7)){
+    MTurkNew$VDA[i] = -2
+  }else{
+    MTurkNew$VDA[i] = NA
+  }
+}
+```
+
+## Re-checking the data cleaning process: all NA are transformed to -Inf
+```{r,echo=FALSE}
+library(dplyr)
+MTurkNew %>% group_by(Frame) %>% summarise(NAs = sum(is.na(Frame)))
+```
+
+```{r,echo=FALSE}
+sum(is.na(MTurkNew$VDA))
+sum(is.na(MTurkNew$Choice_Disease))
+sum(is.na(MTurkNew$Choice_Drought))
+sum(is.na(MTurkNew$Choice_Invest))
+sum(is.na(MTurkNew$Choice_Wildfire))
+```
+
+Data Cleaning Step 5
+## Exclude if two or more of the eight choice/rating questions are not answered
+
+Data Cleaning Step 6
+## Exclude if one or more of the choice and rating do not match
+
+Revisit numerical coding scheme of choice and rating answers
+## Qualtrics built-in Coding scheme
++ Program A (Sure):1 
++ Program B (Risky):2
++ Strong Preference for Program A:1
++ Moderate Preference for Program A:2
++ Slight Preference for Program A:3	
++ No Preference At All:4
++ Slight Preference for Program:5
++ Moderate Preference for Program B:6	
++ Strong Preference for Program B:7
+
+
++ Sure = 0
++ Risky = 1
++ Rescored to -3 to 3, high favors Risky
++ Strong Preference for Program A (Sure): -3 
++ No Preference At All: 0
++ Strong Preference for Program B (Risky): 3
+
+```{r,echo=FALSE}
+## We want to remove rows with count > 2, meaning the participant didn't answer 2 or more answers
+## We also want to remove rows where check is != 0 since we don't want any inconsistence between choice and rating (slacking off)
+## Do we consider a missing answer paired with an answer as inconsisntency? No!
+## column 22 is Choice_Disease
+
+MTurkNew$Check <- 0
+MTurkNew$Count <- 0
+
+for (i in 1:dim(MTurkNew)[1]){
+  for(j in 0:3){
+    # Only if choose option A = 0, rating question answers ranged in (0,3], is inconsistency
+    # Only if choose option B = 1, rating question answers ranged in [-3,0), is inconsistency
+    if((MTurkNew[i,21+j] == 0 && MTurkNew[i,25+j] > 0)
+       | (MTurkNew[i,21+j] == 1 && MTurkNew[i,25+j] < 0 && MTurkNew[i,25+j] >= -3)){
+      MTurkNew$Check[i] <- MTurkNew$Check[i] + 1
+    }
+    else{
+      MTurkNew$Check[i] <- MTurkNew$Check[i] + 0
+    }
+    # checking if one of the binary choice is not answered
+    if(MTurkNew[i,21+j] < 0){
+      MTurkNew$Count[i] <- MTurkNew$Count[i] + 1
+    }
+    else{
+      MTurkNew$Count[i] <- MTurkNew$Count[i] + 0
+    }
+    # checking if one of the rating choice is not answered
+    if(MTurkNew[i,25+j] < -3){
+      MTurkNew$Count[i] <- MTurkNew$Count[i] + 1
+    }
+    else{
+      MTurkNew$Count[i] <- MTurkNew$Count[i] + 0
+    }
+  }
+}
+```
+
+```{r,echo=FALSE}
+dim(MTurkNew)
+sublist1 <- MTurkNew[which(MTurkNew$Check > 0),c(34,5,21:28)]
+sublist2 <- MTurkNew[which(MTurkNew$Count >= 2),c(34,5,21:28)]
+```
+
+
+```{r,echo=FALSE}
+MTurkNew[MTurkNew$ID==702,c(34,5,21:28)]
+MTurkNew[MTurkNew$ID==1006,c(34,5,21:28)]
+```
+
+```{r,echo=FALSE}
+which(MTurkNew$Check > 0)
+which(MTurkNew$Count >= 2)
+list <- c(which(MTurkNew$Check > 0), which(MTurkNew$Count >= 2))
+```
+
+*RUN ONLY ONCE*
+
+## Before exclusion, n = 938
+## missing value check, n = 929 
+## inconsistency check, n = 906
+```{r,echo=FALSE}
+# Check their answers, conbine the list of sloppy participants to REMOVE dups
+# Becuase only we exclude participants with one exclusion criteria, their row number will be updated!
+# Can also use ID to form exclusion list to be extra cautious
+MTurkNew[list, c(34,21:28)]
+sort(list)
+newlist <- unique(list)
+newlist
+```
+
+**906 subjects left after final check**
+```{r,echo=FALSE}
+MTurkNew <- MTurkNew[-list, ]
+dim(MTurkNew)
+```
+
+---------------------------------------- Subject Exclusion Process Completes.---------------------------------------------------------------------------
+
+Final Dataset Prepping ~
+```{r,echo=FALSE}
+library(dplyr)
+set.seed(1)
+MTurkNew %>% 
+  group_by(Cell) %>%
+  summarise(num_rows = length(Cell))
+```
+
++ Dataset Transformation
+```{r,echo=FALSE}
+# Transforming previous wide dataset with 4 columns representing choices to 1 column, with an additional column specifying the domain each answer is in.
+tallMTurk <- MTurkNew %>% pivot_longer(c(21:28), names_to =  c(".value", "Domain"), names_sep = "_")
+```
+
++ Dataset Clean-up
+```{r,echo=F}
+# Take out rows with NA (which is marked as -Inf) in the tall dataset. 
+# only exclude the rows without choice answers, rating answers were not used so no need to exclude rows without rating answers.
+smallMTurk <- tallMTurk[,15:34]
+dim(smallMTurk)[1]
+which(smallMTurk$Choice == -Inf)
+smallMTurk <- smallMTurk[-which(smallMTurk$Choice == -Inf),]
+dim(smallMTurk)[1]
+```
+
++ Attribute Prep
+```{r,echo=F}
+# Tranfrom the frame attribute such that gain frame has a value of -0.5 and loss frame has a value of 0.5
+smallMTurk$Frame <- ifelse(smallMTurk$Frame == "Gain", -0.5, 0.5)
+smallMTurk$Frame <- as.factor(smallMTurk$Frame)
+```
+
+
+-----------------------------------------------------Analysis Starts Here.----------------------------------------------------------------------------------
+Primary analysis: mixed effect logistic regression
++ Attributes used: Cell, Order, Domain, Frame, VDA, Domain, Choice and Rating
+
++ MELR 1: basic model
+$$Y_{Choice} = \beta_0+ \beta_1{VDA} + \beta_2Frame + \beta_3VDA:Frame + (1|ID)$$
+
+```{r,echo=F}
+# bound optimization by quadratic approximation (BOBYQA) with a set maximum of 200,000 iterations (BOBYQA recommends at least 100,000)
+mlr1 <- glmer(Choice ~ VDA + Frame + VDA:Frame + (1|ID), family = binomial, data = smallMTurk, control= glmerControl(optimizer="bobyqa"))
+summary(mlr1)
+exp(1.19919)
+# coef(mlr1)
+```
+
+## Option outcome order (good or bad first) was set in the data cleaning process as following,
+If that option order makes the risky option in that option pair sounds more favorable: 0.5
+If no effect: 0 
+If that option order makes the risky option in that option pair sounds less favorable: -0.5
+
++ MELR 2: Description order attribute added as main effect
+$$Y_{Choice} = \beta_0+ \beta_1{VDA} + \beta_2Frame + \beta_3DescriptionOrder + \beta_4VDA:Frame + (1|ID)$$
+
+```{r,echo=F}
+# Option outcome order is not significant as main effect in the model
+mlr2 <- glmer(Choice ~ VDA + Frame + Order + VDA:Frame + (1|ID), family = binomial, data = smallMTurk, control= glmerControl(optimizer="bobyqa"))
+summary(mlr2)
+# Ho: beta3 = 0
+anova(mlr1,mlr2)
+```
+
+
++ MELR 3: Description order attribute added as main effect & interaction effect
+$$Y_{Choice} = \beta_0+ \beta_1{VDA} + \beta_2Frame + \beta_3Order + \beta_4VDA:Frame + \beta_5VDA:Order + \beta_6Frame:Order + (1|ID)$$
+```{r,echo=F}
+# Option outcome order is not significant in main effect nor in interactions with VDA and frame
+# The interaction between VDA and order is almost significant, but the anova test shows that they are not useful in the model
+mlr2.5 <- glmer(Choice ~ VDA + Frame + Order + VDA:Frame + Order:Frame + (1|ID), family = binomial, data = smallMTurk, control= glmerControl(optimizer="bobyqa"))
+mlr3 <- glmer(Choice ~ VDA + Frame + Order + VDA:Frame + Order:Frame + Order:VDA + (1|ID), family = binomial, data = smallMTurk, control= glmerControl(optimizer="bobyqa"))
+summary(mlr3)
+anova(mlr2,mlr3)
+anova(mlr2.5,mlr3)
+```
+
+
++ MELR 4: Domain added as fixed effect and interaction effects
+
+$$Y_{Choice} = \beta_0+ \beta_1{VDA} + \beta_2Frame + \beta_3Domain + \beta_4VDA:Frame + \beta_5Frame:Domain + \beta_6VDA:Domain + (1|ID)$$
+```{r,echo=F}
+mlr4 <- glmer(Choice ~ VDA + Frame + Domain + VDA:Frame + Domain:Frame + VDA:Domain + (1|ID), family = binomial, data = smallMTurk, control =  glmerControl(optimizer="bobyqa"))
+summary(mlr4)
+```
+
+
+```{r,echo=FALSE, warning=FALSE}
+smallMTurk$DomainOrder <- NA
+```
+
+## Assign a unqiue position variable to each answer (4 answers/participants in random order)
+We know the actual order of the 4 domains being presented, which is stored in attributes FirstDomain:FourthDomain;
+we also know the domain of each answer(row), stored in "Domain" 
+Match the "Domain" variable to "FirstDomain:FourthDomain"; store result in "DomainOrder"; that is the position of the specific question (answer).
+
+```{r,echo=FALSE, warning=FALSE}
+for (i in 1:dim(smallMTurk)[1]){
+  smallMTurk$DomainOrder[i] <- ifelse(smallMTurk$Domain[i] == smallMTurk$FirstDomain[i], 1, ifelse(smallMTurk$Domain[i] == smallMTurk$SecondDomain[i], 2, ifelse(smallMTurk$Domain[i] == smallMTurk$ThirdDomain[i], 3, ifelse(smallMTurk$Domain[i] == smallMTurk$FourthDomain[i], 4, NA))))
+}
+```
+
+## Recode the position variable
+The orginal position variable, or question number we got from last step is 1,2,3,4.
+Recode this attribute by subtracting 2.5 so it ranges in {-1.5,-0.5,0.5,1.5}
+Then negate the numbers, so a bigger number would indicate a more forward position. The final set is {1.5,0.5,-0.5,-1.5}
+
+```{r,echo=FALSE, warning=FALSE}
+smallMTurk$DomainOrderCode <- -(smallMTurk$DomainOrder - 2.5)
+```
+
++ MELR 5: Position variable added in fixed effect
+$$Y_{Choice} = \beta_0+ \beta_1{VDA} + \beta_2Frame + \beta_3Position + \beta_4VDA:Frame + \beta_5Position:Frame + \beta_6Position:VDA + (1|ID)$$
+```{r,echo=FALSE, warning=FALSE}
+# The interactions between question position variable with Frame and VDA are insignificant
+# Seperate analyses were performed at each question position. We got significant framing effect at each position, although gradually decreasing.
+mlr5 <- glmer(Choice ~ VDA + Frame + DomainOrderCode + VDA:Frame + DomainOrderCode:Frame + DomainOrderCode:VDA + (1|ID), family = binomial, data = smallMTurk, control= glmerControl(optimizer="bobyqa"))
+summary(mlr5)
+```
+
+
+```{r,echo=FALSE, warning=FALSE}
+anova(mlr1, mlr5)
+```
+
++ MELR 6/7/7.5 other mlrs with domain variable added as fixed-effect, as interaction effect (VDA:Domain), full interactions like mlr4 but predictors added in a difference order
+Step-wise hypothesis testings.
+
+$$mlr6: Y_{Choice} = \beta_0+ \beta_1{VDA} + \beta_2Frame + \beta_3VDA:Frame + \beta_4Domain + (1|ID)$$
+$$mlr7: Y_{Choice} = \beta_0+ \beta_1{VDA} + \beta_2Frame + \beta_3VDA:Frame + \beta_4Domain + \beta_5VDA:Domain + (1|ID)$$
+
+$$mlr7.5: Y_{Choice} = \beta_0+ \beta_1{VDA} + \beta_2Frame + \beta_3VDA:Frame + \beta_4Domain + \beta_5VDA:Domain + \beta_6Frame:Domain + (1|ID)$$
+### warnings: Variance == 0 
+```{r,echo=FALSE, warning=FALSE}
+mlr6 <-  glmer(Choice ~ VDA + Frame + VDA:Frame + Domain + (1|ID), family = binomial, data = smallMTurk, control =  glmerControl(optimizer="bobyqa"))
+summary(mlr6)
+
+mlr7 <-  glmer(Choice ~ VDA + Frame + VDA:Frame + Domain + VDA:Domain + (1|ID), family = binomial, data = smallMTurk, control =  glmerControl(optimizer="bobyqa"))
+summary(mlr7)
+
+mlr7.5 <- glmer(Choice ~ VDA + Frame + VDA:Frame + Domain + VDA:Domain + Frame:Domain + (1|ID), family = binomial, data = smallMTurk, control =  glmerControl(optimizer="bobyqa"))
+summary(mlr7.5)
+```
+
+Anova Tests
++ Null:$\beta_5 = 0$ 
+```{r,echo=FALSE, warning=FALSE}
+anova(mlr6, mlr7)
+```
+
++ Null:$\beta_6 = 0$ 
+```{r,echo=FALSE, warning=FALSE}
+anova(mlr7, mlr7.5)
+```
+
+```{r,echo=FALSE, warning=FALSE}
+lossRiskyCount <- length(intersect(which(smallMTurk['Choice'] == 1), which(smallMTurk['Frame'] == 0.5)))
+lossSureCount <- length(intersect(which(smallMTurk['Choice'] == 0), which(smallMTurk['Frame'] == 0.5)))
+gainRiskyCount <- length(intersect(which(smallMTurk['Choice'] == 1), which(smallMTurk['Frame'] == -0.5)))
+
+probRiskyLoss <- lossRiskyCount/length(which(smallMTurk['Frame'] == 0.5))
+probRiskyGain <- gainRiskyCount/length(which(smallMTurk['Frame'] == -0.5))
+
+probRiskyLoss
+probRiskyGain
+
+# odds inplied by these percentages are
+oddsLoss <- probRiskyLoss/(1-probRiskyLoss)
+oddsGain <- probRiskyGain/(1-probRiskyGain)
+
+oddsLoss
+oddsGain
+
+# odds ratio
+oddsLoss/oddsGain 
+```
+
+
+
+
+
+
+
